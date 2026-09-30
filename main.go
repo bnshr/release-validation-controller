@@ -165,6 +165,9 @@ func (c *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	if err != nil {
 		return ctrl.Result{}, err
 	}
+	if !metav1.IsControlledBy(job, r) {
+		return ctrl.Result{}, fmt.Errorf("job %s exists but is not owned by validation run %s", job.Name, r.Name)
+	}
 	if job.Status.Succeeded > 0 {
 		return ctrl.Result{}, c.finish(ctx, r, "Passed", fmt.Sprintf("Suite %s passed on attempt %d", r.Spec.Suite, r.Status.Attempt))
 	}
@@ -197,7 +200,17 @@ func (c *Reconciler) setStatus(ctx context.Context, r *ValidationRun, phase, rea
 	return c.Status().Update(ctx, r)
 }
 func (c *Reconciler) finish(ctx context.Context, r *ValidationRun, phase, reason string) error {
-	// Remove every owned attempt before releasing its allocation.
+	now := metav1.Now()
+	r.Status.CompletedAt = &now
+	report := fmt.Sprintf("Learning project qualification: %s. Version %s; suite %s; capacity %s; attempts %d. Reason: %s. Jobs use scripted CPU containers; gpu-simulated reserves a logical slot and does not test GPU hardware.", strings.ToUpper(phase), r.Spec.Version, r.Spec.Suite, class(r), r.Status.Attempt, reason)
+	// Persist the decision first. A failed cleanup can then safely resume on the next reconcile.
+	return c.setStatus(ctx, r, phase, reason, report)
+}
+func (c *Reconciler) cleanup(ctx context.Context, r *ValidationRun) error {
+	if !controllerutil.ContainsFinalizer(r, finalizer) {
+		return nil
+	}
+	// Keep the allocation until all owned Jobs have disappeared.
 	jobs := &batchv1.JobList{}
 	if err := c.List(ctx, jobs, client.InNamespace(r.Namespace), client.MatchingLabels{"validation-run": r.Name, "app": "release-validation-controller"}); err != nil {
 		return err
@@ -210,18 +223,7 @@ func (c *Reconciler) finish(ctx context.Context, r *ValidationRun, phase, reason
 		if err := c.Delete(ctx, j, client.PropagationPolicy(metav1.DeletePropagationForeground)); err != nil && !apierrors.IsNotFound(err) {
 			return err
 		}
-	}
-	if err := c.release(ctx, r); err != nil {
-		return err
-	}
-	now := metav1.Now()
-	r.Status.CompletedAt = &now
-	report := fmt.Sprintf("Learning project qualification: %s. Version %s; suite %s; capacity %s; attempts %d. Reason: %s. Jobs use scripted CPU containers; gpu-simulated reserves a logical slot and does not test GPU hardware.", strings.ToUpper(phase), r.Spec.Version, r.Spec.Suite, class(r), r.Status.Attempt, reason)
-	return c.setStatus(ctx, r, phase, reason, report)
-}
-func (c *Reconciler) cleanup(ctx context.Context, r *ValidationRun) error {
-	if !controllerutil.ContainsFinalizer(r, finalizer) {
-		return nil
+		return fmt.Errorf("waiting for job %s to be deleted", j.Name)
 	}
 	if err := c.release(ctx, r); err != nil {
 		return err
