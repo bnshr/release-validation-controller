@@ -19,9 +19,11 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/util/retry"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 )
 
 var groupVersion = schema.GroupVersion{Group: "learning.example.io", Version: "v1alpha1"}
@@ -298,6 +300,7 @@ func (c *Reconciler) release(ctx context.Context, r *ValidationRun) error {
 }
 
 func main() {
+	ctrl.SetLogger(zap.New(zap.UseDevMode(true)))
 	ns := flag.String("namespace", "default", "namespace to watch")
 	cpu := flag.Int("cpu-capacity", 2, "maximum concurrent CPU runs")
 	gpu := flag.Int("gpu-simulated-capacity", 1, "maximum concurrent simulated GPU runs")
@@ -311,7 +314,7 @@ func main() {
 	_ = batchv1.AddToScheme(scheme)
 	scheme.AddKnownTypes(groupVersion, &ValidationRun{}, &ValidationRunList{})
 	metav1.AddToGroupVersion(scheme, groupVersion)
-	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{Scheme: scheme, LeaderElection: true, LeaderElectionID: "release-validation.learning.example.io"})
+	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{Scheme: scheme, Cache: cache.Options{DefaultNamespaces: map[string]cache.Config{*ns: {}}}, LeaderElection: true, LeaderElectionID: "release-validation.learning.example.io", LeaderElectionNamespace: *ns})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
