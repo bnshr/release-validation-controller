@@ -1,0 +1,11 @@
+apiVersion: learning.example.io/v1alpha1
+kind: ValidationRun
+metadata:
+  name: example-qualification
+  namespace: default
+spec:
+  version: "4.19.0"
+  suite: smoke
+  capacity: cpu
+  timeoutSeconds: 120
+  retries: 1
